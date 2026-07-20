@@ -20,6 +20,8 @@ For each participant an `accel` and `events` file were created:
 - `accel`: Contains acceleration measurements across the three axis
 - `events`: Contains stroke event timestamps corresponding to events occuring in `accel`
 
+Due to privacy concerns these data and video files will not be made public.
+
 ## Data Processing
 Section will be updated once this stage is completed
 
