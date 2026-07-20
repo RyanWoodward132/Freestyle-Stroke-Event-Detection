@@ -1,6 +1,6 @@
 # FSED-Pilot
 ## Overview
-Pilot experiment of [Freestyle-Stroke-Event-Detection](https://github.com/RyanWoodward132/CNN-Stroke-Event-Detection).
+Pilot experiment of [Freestyle-Stroke-Event-Detection](https://github.com/RyanWoodward132/Freestyle-Stroke-Event-Detection).
 
 The goal of this project is to build a Convolutional Neural Network that classifies three stroke events in elite level freestyle (Entry, Pull, Push) from 3-axis accelerometer data and derived features.
 
