@@ -1,14 +1,17 @@
-# Data Directory
-Dat
+# Data (raw, processed, and artefacts) -- not public
+Dat/
 
-# Processing Script Directory
-Procc
+# Videos -- not public
+Videos/
 
-# Videos Directory
-Videos
-
-# README files
-README_files
-README.html
+# Generated reports / notes (results are summarised in README.md)
+Model_Comparison_Report.md
 CNN_Transformer_HAR_Literature_Review.md
 CNN_Transformer_HAR_Research.md
+README.html
+README_files/
+
+# OS / editor / Python
+.DS_Store
+__pycache__/
+*.pyc
