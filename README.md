@@ -1,4 +1,4 @@
-# FSED-Pilot
+# Freestyle Stroke Event Detection
 
 Freestyle stroke-event detection from a single wearable accelerometer.
 
