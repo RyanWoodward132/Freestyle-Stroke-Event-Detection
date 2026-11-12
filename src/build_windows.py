@@ -41,22 +41,23 @@ def participant(pid: str):
     feat = acc[CHANNELS].to_numpy(np.float32)
     X = sliding_window_view(feat, WIN, axis=0)[idx]           # (n, channels, WIN)
     y = np.array([CLASSES.index(l) for l in labels], np.int64)
-    return X, y, np.full(len(y), pid), (~ok).sum()
+    return X, y, np.full(len(y), pid), t[keep][ok], (~ok).sum()
 
 
 def main():
     pids = sorted(p.stem for p in (DAT / "Processed/Accel").glob("*.csv"))
-    Xs, ys, gs = [], [], []
+    Xs, ys, gs, ts = [], [], [], []
     for pid in pids:
-        X, y, g, dropped = participant(pid)
+        X, y, g, t, dropped = participant(pid)
         print(f"{pid}: {len(y):4d} windows" + (f"  ({dropped} past end of recording)" if dropped else ""))
-        Xs.append(X), ys.append(y), gs.append(g)
+        Xs.append(X), ys.append(y), gs.append(g), ts.append(t)
 
     X, y, groups = np.concatenate(Xs), np.concatenate(ys), np.concatenate(gs)
+    t = np.concatenate(ts)
     assert X.shape[1:] == (len(CHANNELS), WIN)
 
     out = DAT / "Windows/windows.npz"
-    np.savez_compressed(out, X=X, y=y, groups=groups, classes=CLASSES, channels=CHANNELS)
+    np.savez_compressed(out, X=X, y=y, groups=groups, t=t, classes=CLASSES, channels=CHANNELS)
     print(f"\n{X.shape} -> {out}")
     for i, c in enumerate(CLASSES):
         print(f"  {c:9s} {(y == i).sum()}")
