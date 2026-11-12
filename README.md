@@ -48,7 +48,7 @@ A 7-channel variant adding the jerk features was evaluated first and did no bett
 
 The CNN's errors suggested the remaining problem was context, not features, so the extended model keeps the CNN as a per-event encoder and adds a transformer over the event sequence.
 
-Sequence construction: within each swimmer, events are ordered by their synced timestamps, and each event becomes the centre of a sequence of nine consecutive events, just over one full stroke cycle (eight events) of context. Sequences at the ends of a recording replicate the edge events, with an attention mask over the padding.
+Sequence construction: within each swimmer, events are ordered by their synced timestamps, and each event becomes the centre of a sequence of nine consecutive events: the event to be classified (the **centre event**) plus the four before it and the four after it as context, just over one full stroke cycle (eight events). Sequences at the ends of a recording replicate the edge events, with an attention mask over the padding. Building sequences over the full event stream keeps the context spacing uniform: in both train and test, the four events either side of a centre event are its true temporal neighbours, so the model is trained and tested on the same kind of sequence.
 
 ```text
 per event: CNN conv stack above (no classifier head)     => 128-d embedding
@@ -61,8 +61,6 @@ The training recipe is unchanged. The model is evaluated two ways:
 
 - **Pooled stratified 80/20**, identical seeds to the base model. Sequences are built over all events and assigned to train or test by their centre event. Test events can appear as unlabelled context inside training sequences; labels never cross the split. This is the same class of leakage the pooled regime already accepts for individual windows.
 - **Leave-one-swimmer-out (LOSO)**: six folds, each holding out one swimmer entirely, so nothing from the test swimmer, context included, is seen in training.
-
-One sequencing detail turned out to matter as much as the model: context spacing has to match between train and test. An earlier variant that built sequences separately within each split failed outright, because randomly removing events left training context about 1.25 events apart on average but test context about 5 apart. Building sequences over the full stream keeps the spacing uniform.
 
 ## Results
 
