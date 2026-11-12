@@ -1,37 +1,41 @@
-# Freestyle Stroke Event Detection
+# FSED-Pilot
 
 Freestyle stroke-event detection from a single wearable accelerometer.
 
+Pilot experiment for [Freestyle-Stroke-Event-Detection](https://github.com/RyanWoodward132/Freestyle-Stroke-Event-Detection).
+
 ## Overview
 
-This project classifies the stroke phases of elite freestyle swimmers from a single three-axis accelerometer worn on the upper back. For each stroke event the model distinguishes eight classes: left or right arm, and entry, catch, pull or push.
+This project teaches a model to recognise what a swimmer is doing at any moment of the freestyle stroke, using only a small motion sensor worn on the upper back. Every stroke event falls into one of eight classes: left or right arm, and one of four phases (entry, catch, pull, push).
 
-Two models are compared. A compact 1D CNN classifies a single 0.25 s window around each event and reaches 0.61 macro F1. A lightweight transformer that sees the surrounding nine events reaches 0.76, and its gains land on the same phases the CNN keeps confusing. That pattern has an explanation: about four in five CNN errors pick the wrong arm at a neighbouring phase, which is precisely the kind of mistake that temporal context can fix.
+Two models are compared. The first looks at a 0.25-second snippet of motion around each event and scores 0.61. The second also sees the four events before and the four after, and scores 0.76. The reason context helps so much is simple: when the first model gets something wrong, it usually has the right shape of movement but the wrong arm, and you can only tell those apart if you know where you are in the stroke cycle.
+
+Scores below are accuracy and macro F1. Both run from 0 to 1; macro F1 treats all eight classes equally, even the harder ones. Random guessing scores 0.125. The ± values show how much results vary between runs.
 
 ## Data
 
-Ten competitive swimmers performed a 100 m maximal-effort freestyle swim wearing an inertial measurement unit (IMU) on the upper back. The accelerometer recorded three axes (vertical, lateral, sagittal) at 100 Hz, and stroke events were labelled by hand from synchronised video.
+Ten competitive swimmers swam a 100 m maximal-effort freestyle wearing an inertial measurement unit (a small sensor recording acceleration in three directions, 100 times per second) on the upper back. Each stroke event was labelled by hand from synchronised video.
 
-Six participants (`AC`, `IR`, `JD`, `JH`, `KV`, `RW`) were carried through the full pipeline and used for modelling, giving 1,313 labelled event windows (159 to 169 per class, roughly balanced).
+Six swimmers (`AC`, `IR`, `JD`, `JH`, `KV`, `RW`) were carried through the full pipeline and used for modelling, giving 1,313 labelled events, roughly balanced across the eight classes (159 to 169 each).
 
-Raw accelerometer data and videos are withheld for privacy and are not part of this repository. The committed code only documents the complete processing and modelling pipeline.
+The raw data and videos are private and not part of this repository. The code here documents the full pipeline.
 
 ## Processing pipeline
 
-Per-participant R scripts in `Processing/<ID>.R` run an identical pipeline:
+Each swimmer's raw data goes through the same steps (one R script per swimmer in `Processing/`):
 
-1. Load raw accelerometer data and event timestamps.
-2. Convert timestamps to elapsed seconds from the first recording.
-3. Detect the swim start from the vertical-acceleration peak in a known time window, then sync event timestamps to the accelerometer time axis.
-4. Filter each axis with a 2nd-order Butterworth low-pass filter (20 Hz cutoff, 100 Hz sampling rate).
-5. Compute jerk (time derivative of acceleration) per axis, plus jerk magnitude.
-6. Drop rows with missing values (introduced by the derivative) and export processed CSVs.
+1. Load the raw accelerometer data and the event timestamps.
+2. Convert timestamps to seconds from the start of the recording.
+3. Find the moment the swim starts (a clear spike in vertical acceleration) and line the event labels up with the sensor timeline.
+4. Smooth each axis with a low-pass filter to remove high-frequency noise.
+5. Compute jerk (how quickly acceleration changes) for each axis.
+6. Drop incomplete rows and export the cleaned files.
 
-`src/build_windows.py` then extracts a 25-sample window (0.25 s at 100 Hz) anchored at each stroke event, labels it by arm and phase, and saves everything to `Dat/Windows/windows.npz`. The file holds seven channels (three acceleration, three jerk, jerk magnitude) plus each event's synced timestamp. The models use the acceleration channels only; the timestamps are what the extended model needs to order events, because the event CSVs are not stored in time order.
+`src/build_windows.py` then cuts a 0.25-second window (25 samples) of the signal at each event, attaches its class label, and saves everything to `Dat/Windows/windows.npz`. It also stores when each event happened, because the event files are not stored in time order and the second model needs events in the order they actually occurred.
 
 ## Base model
 
-The base model is a compact 1D CNN over the three acceleration channels:
+The base model is a small neural network (a 1D convolutional network, or CNN) that looks at one window at a time and learns which patterns of movement belong to which class:
 
 ```text
 Conv1d(3, 64, k=5) -> BatchNorm -> ReLU
@@ -40,38 +44,38 @@ Conv1d(128, 128, k=3) -> BatchNorm -> ReLU
 AdaptiveAvgPool1d(1) -> Flatten -> Dropout(0.3) -> Linear(128, 8)
 ```
 
-Training: 120 epochs, AdamW (`lr=3e-3`, `weight_decay=1e-4`), cosine-annealing schedule, stratified 80/20 train/test split held constant per seed, per-channel z-score normalisation using training-split statistics only.
+It is trained on 80% of the windows and tested on the remaining 20%, with the mix of classes kept the same in both halves. Windows are standardised using statistics from the training half only, so the model never gets a sneak peek at the test data.
 
-A 7-channel variant adding the jerk features was evaluated first and did no better (0.588 vs 0.602 macro F1 over five seeds, with deltas smaller than the seed-to-seed spread), so the 3-channel model is the default and the baseline for everything below.
+We first tested a version that also used the jerk channels as extra inputs. It did no better (0.588 vs 0.602 macro F1 over five runs), so the simpler three-channel model is the baseline for everything below.
 
 ## Extended model
 
-The CNN's errors suggested the remaining problem was context, not features, so the extended model keeps the CNN as a per-event encoder and adds a transformer over the event sequence.
-
-Sequence construction: within each swimmer, events are ordered by their synced timestamps, and each event becomes the centre of a sequence of nine consecutive events: the event to be classified (the **centre event**) plus the four before it and the four after it as context, just over one full stroke cycle (eight events). Sequences at the ends of a recording replicate the edge events, with an attention mask over the padding. Building sequences over the full event stream keeps the context spacing uniform: in both train and test, the four events either side of a centre event are its true temporal neighbours, so the model is trained and tested on the same kind of sequence.
+The CNN's mistakes suggested the problem was missing context rather than missing features, so the extended model shows the CNN the surrounding events as well. Each event is placed in the middle of a sequence of nine consecutive events from that swimmer: the event to classify (the centre event) plus the four that happened just before it and the four just after. That covers a little over one full stroke cycle. The context events are raw signal only; the model is never told their labels.
 
 ```text
-per event: CNN conv stack above (no classifier head)     => 128-d embedding
-sequence:  + learned positional embedding (9 positions)
+per event: the CNN above (without its final layer)     => one 128-number summary per event
+sequence:  + learned position information (slots 1 to 9)
            -> TransformerEncoder(d_model=128, 4 heads, 2 layers, ff=256, dropout=0.1)
-           -> centre token -> Dropout(0.3) -> Linear(128, 8)
+           -> read out the middle slot -> Dropout(0.3) -> Linear(128, 8)
 ```
 
-The training recipe is unchanged. The model is evaluated two ways:
+The second stage is a transformer, a sequence model that can learn what tends to come before and after each phase. Both models are trained with identical settings and identical data splits, so any difference in score comes from the context, not the setup. Because sequences are built from the full event stream, the events either side are always the ones that really happened just before and after, in both training and testing.
 
-- **Pooled stratified 80/20**, identical seeds to the base model. Sequences are built over all events and assigned to train or test by their centre event. Test events can appear as unlabelled context inside training sequences; labels never cross the split. This is the same class of leakage the pooled regime already accepts for individual windows.
-- **Leave-one-swimmer-out (LOSO)**: six folds, each holding out one swimmer entirely, so nothing from the test swimmer, context included, is seen in training.
+The extended model is evaluated two ways:
+
+- **Shared 80/20 split**: the same split as the base model. A sequence belongs to whichever half its centre event landed in, so events from one half can appear as unlabelled context in the other. This is the same level of information sharing the base model already has (windows from the same swimmer appear in both halves).
+- **Leave-one-swimmer-out**: train on five swimmers, test on the sixth, and rotate until every swimmer has been the test case. Nothing from the test swimmer is seen during training. This is the harder, more realistic test of whether the model works on someone new.
 
 ## Results
 
-Pooled 80/20, paired runs over five seeds (`src/train_transformer.py`):
+Shared 80/20 split, both models trained on the same splits over five runs:
 
 | Model | Accuracy | Macro F1 |
 | --- | --- | --- |
 | CNN (base) | 0.610 ± 0.036 | 0.611 ± 0.036 |
 | Transformer (extended) | **0.763 ± 0.021** | **0.764 ± 0.022** |
 
-Paired delta in macro F1: **+0.154 ± 0.018**. Per-class F1 improves on every class, most of all the boundary classes:
+That is a gain of +0.154 macro F1, and every class improves. The biggest gains are on the classes the CNN found hardest:
 
 | Class | CNN F1 | Transformer F1 |
 | --- | --- | --- |
@@ -84,7 +88,7 @@ Paired delta in macro F1: **+0.154 ± 0.018**. Per-class F1 improves on every cl
 | RA pull | 0.698 ± 0.036 | **0.865 ± 0.067** |
 | RA push | 0.480 ± 0.104 | **0.641 ± 0.053** |
 
-LOSO, six folds with five seeds each (mean over seeds per fold):
+Leave-one-swimmer-out, five runs per swimmer:
 
 | Test swimmer | CNN acc | Transformer acc | CNN macro F1 | Transformer macro F1 |
 | --- | --- | --- | --- | --- |
@@ -98,22 +102,22 @@ LOSO, six folds with five seeds each (mean over seeds per fold):
 
 ## Interpretation
 
-The CNN's errors are mostly not random. Decomposing its 8-class macro F1 (0.588 over five seeds): predicting only the arm scores 0.672, and predicting only the phase scores 0.610. Yet 79.5% of errors pick the wrong arm, usually at a neighbouring phase, such as LA entry confused with RA push. Per-class F1 also tracks the median distance to the nearest opposite-arm event (Spearman ρ = +0.76, p = 0.029, n = 8): the closer a phase sits to an opposite-arm event, the harder it is to classify. Catch and pull are well separated and classified best; entry and push sit next to the other arm's events and are the hardest.
+The CNN's mistakes are not random. When it is wrong, about four times out of five it has picked the wrong arm at a nearby phase, for example confusing a left-arm entry with a right-arm push. These are events that happen close together in the stroke cycle and look similar in a quarter-second window. Phases that sit further apart, like catch and pull, are classified well; the boundary phases, entry and push, are the hardest.
 
-This is why the transformer helps where it does. Under the pooled split its biggest gains are RA entry (0.450 to 0.672) and LA entry (0.557 to 0.678), the two weakest CNN classes, followed by the push phases. The model is using stroke-cycle order to tell apart events that look alike in a 0.25 s window.
+This is exactly where the context helps. The transformer's largest gains are on the entry and push classes, the ones that need stroke-cycle order to tell apart. RA entry, the CNN's weakest class at 0.450, rises to 0.672.
 
-The LOSO numbers keep this honest. Both models lose roughly half their pooled performance when the test swimmer is unseen, which says the pooled figures lean heavily on swimmer-specific patterns rather than general stroke structure. The transformer still finishes ahead on four of six folds (+0.031 ± 0.081 macro F1), with its gains again concentrated on entry and push, but at six swimmers that delta is inside the fold-to-fold noise. Treat 0.764 as an upper bound and 0.301 as a lower bound on what the extended model would do on a new swimmer.
+The leave-one-swimmer-out results keep the headline number honest. On an unseen swimmer both models drop to around 0.30, which means a large part of the 0.76 comes from recognising individual swimmers' movement styles rather than universal stroke structure. The transformer still beats the CNN for four of the six swimmers, and again mainly on the entry and push classes, but with only six swimmers that edge is within the noise. The fairest reading: on a new swimmer, the extended model's true score likely sits somewhere between 0.30 and 0.76, and pinning that down needs more data.
 
 ## Limitations
 
-- **Subject leakage in the pooled split.** Windows from the same swimmer appear in both train and test, so the pooled figures are optimistic for subject-independent generalisation. The LOSO results above are the more realistic estimate.
-- **Small cohort.** Six participants and about 1,300 windows bound how far any of this generalises, and they make the LOSO folds noisy.
-- **Manual labels.** Event boundaries come from human video review, which carries labelling noise.
-- **Events are given, not detected.** Both models classify windows around known event timestamps. Running on a raw stream would need an event-detection step in front, and the extended model additionally needs the surrounding events located before it can classify.
+- **The 80/20 split shares swimmers.** Windows from the same swimmer appear in both halves, so the 0.76 figure is optimistic for use on someone new. The leave-one-swimmer-out results are the more realistic estimate.
+- **Small cohort.** Six swimmers and about 1,300 labelled events can only take conclusions so far, and it makes the per-swimmer results noisy.
+- **Hand-made labels.** Event times come from human video review, which is never perfectly precise.
+- **Events are given, not found.** Both models classify around known event times. Using this in practice would first require a step that finds stroke events in a raw recording.
 
 ## Next steps
 
-- Grow the cohort. More swimmers would tighten the LOSO estimate and matter more than any model tuning.
-- Add an event-detection front end so the pipeline runs on raw accelerometer streams rather than hand-marked events.
-- Explore data augmentation and per-class weighting for the entry and push phases.
-- Visualise the transformer's attention to check whether it attends to the adjacent opposite-arm events the error analysis implicates.
+- Collect data from more swimmers. This would tighten the leave-one-swimmer-out estimate more than any model tuning would.
+- Add a step that finds stroke events automatically, so the pipeline can run on raw recordings instead of hand-marked events.
+- Try data augmentation and class weighting for the entry and push phases.
+- Look at what the transformer attends to, to check whether it is really using the neighbouring events we think it is.
