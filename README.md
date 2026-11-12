@@ -1,8 +1,6 @@
-# FSED-Pilot
+# Freestyle Stroke Event Detection
 
 Freestyle stroke-event detection from a single wearable accelerometer.
-
-Pilot experiment for [Freestyle-Stroke-Event-Detection](https://github.com/RyanWoodward132/Freestyle-Stroke-Event-Detection).
 
 ## Overview
 
